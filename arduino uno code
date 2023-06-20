@@ -1,0 +1,509 @@
+#include <Servo.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <AddicoreRFID.h>
+#include <SPI.h>
+
+#define uchar unsigned char
+#define uint unsigned int
+
+//Maximum length of the array
+#define MAX_LEN 16
+
+#define ir_enter A8
+#define ir_back A9
+#define ir_car1 A10
+#define ir_car2 A11
+#define ir_car3 A12
+#define ir_car4 A13
+#define ir_car5 A14
+
+#define RED 22
+#define GREEN 24
+#define BLUE_1 26
+#define BLUE_2 28
+#define BLUE_3 30
+
+#define buzzer 34    //Buzzer pin
+
+
+Servo myservo;  // create servo object to control a servo
+LiquidCrystal_I2C lcd(0x27, 20, 4); // set the LCD address to 0x27 for a 16 chars and 2 line display
+
+uchar fifobytes;
+uchar fifoValue;
+
+AddicoreRFID myRFID;  // create AddicoreRFID object to control the RFID module
+
+//set the pins
+const int chipSelectPin = 10;
+const int NRSTPD = 5;
+
+//int ir_1, ir_2, ir_3, ir_4, ir_5, ir_6, ir_7;
+int Slot1 = 0, Slot2 = 0, Slot3 = 0, Slot4 = 0, Slot5 = 0;
+int flag1 = 0, flag2 = 0;
+int available_Slot = 5;
+int readyToMoveOut = 0, finallyOutofGate = 0;
+int HODGateFlag = 0, LecturerGateFlag = 0, StudentParentVisitorGateFlag = 0, VGF = 0, SGF = 0, PGF = 0;
+int aaa, sss, ppp, vvv;
+int servoPositon = 0;    // variable to store the servo position
+int pulsate_buzzer = 0;
+bool HOD_run_once_onlywhencomingIn = true;
+bool Lecturer_run_once_onlywhencomingIn = true;
+bool Student_run_once_onlywhencomingIn = true;
+bool Parent_run_once_onlywhencomingIn = true;
+bool Visitor_run_once_onlywhencomingIn = true;
+
+String incomingString_Uno_RC522_Reader_HOD, incomingString_Nano_Gate_RC522_Reader;
+
+int ledState = LOW;             // ledState used to set the LED
+
+// Generally, you should use "unsigned long" for variables that hold time
+// The value will quickly become too large for an int to store
+unsigned long previousMillis = 0;        // will store last time LED was updated
+
+// constants won't change:
+const long interval = 500;           // interval at which to blink (milliseconds)
+
+void setup() {
+  myservo.attach(13);  // attaches the servo on pin 9 to the servo object
+  myservo.write(0);              // tell servo to go to position in variable 'servoPositon'
+
+  Serial.begin(9600);
+  Serial1.begin(9600); //for H.O.D RC522 Reader.
+  Serial2.begin(9600); //for gate RC522 Reader.
+
+  // start the SPI library:
+  SPI.begin();
+
+  //PinMode configuration for the IR sensors.
+  pinMode(ir_enter, INPUT);
+  pinMode(ir_back, INPUT);
+  pinMode(ir_car1, INPUT);
+  pinMode(ir_car2, INPUT);
+  pinMode(ir_car3, INPUT);
+  pinMode(ir_car4, INPUT);
+  pinMode(ir_car5, INPUT);
+
+  // PinMode configuration for the LEDs.
+  pinMode(RED, OUTPUT);
+  pinMode(GREEN, OUTPUT);
+  pinMode(BLUE_1, OUTPUT);
+  pinMode(BLUE_2, OUTPUT);
+  pinMode(BLUE_3, OUTPUT);
+
+  // PinMode configuration for the BUZZER.
+  pinMode(buzzer, OUTPUT);
+
+  // PinMode configuration for the last RC522 for lecturer which is connected to arduino mega
+  pinMode(chipSelectPin, OUTPUT);    // Set digital pin 10 as OUTPUT to connect it to the RFID /ENABLE pin
+  digitalWrite(chipSelectPin, LOW);  // Activate the RFID reader
+  pinMode(NRSTPD, OUTPUT);           // Set digital pin 10 , Not Reset and Power-down
+  digitalWrite(NRSTPD, HIGH);
+
+  myRFID.AddicoreRFID_Init();
+
+  Read_Sensor();
+  int total = Slot1 + Slot2 + Slot3 + Slot4 + Slot5;
+  available_Slot = available_Slot - total;
+  lcd.init(); // initialize the lcd
+  lcd.init(); // initialize the lcd
+
+  // Print a message to the LCD.
+  lcd.backlight();
+  lcd.setCursor (0, 1);
+  lcd.print("Smart  Car  Parking");
+  lcd.setCursor (0, 2);
+  lcd.print("       System       ");
+  delay (2000);
+  lcd.clear();
+}
+
+void loop() {
+  Serial.print("ir_enter: "); Serial.println(digitalRead(ir_enter));
+  Serial.print("ir_back: "); Serial.println(digitalRead(ir_back));
+  Serial.print("ir_car1: "); Serial.println(digitalRead(ir_car1));
+  Serial.print("ir_car2: "); Serial.println(digitalRead(ir_car2));
+  Serial.print("ir_car3: "); Serial.println(digitalRead(ir_car3));
+  Serial.print("ir_car4: "); Serial.println(digitalRead(ir_car4));
+  Serial.print("ir_car5: "); Serial.println(digitalRead(ir_car5));
+  Serial.print("slots: "); Serial.println(available_Slot);
+  Serial.print("flag1: "); Serial.println(flag1);
+  Serial.print("flag2: "); Serial.println(flag2);
+  Serial.print("HODGateFlag: "); Serial.println(HODGateFlag);
+  Serial.print("incomingString_Uno_RC522_Reader_HOD: ");
+  Serial.println(incomingString_Uno_RC522_Reader_HOD);
+  Serial.print("incomingString_Nano_Gate_RC522_Reader: ");
+  Serial.println(incomingString_Nano_Gate_RC522_Reader);
+  Serial.print("pulsate_buzzer: ");
+  Serial.println(pulsate_buzzer);
+  Serial.print("sss: "); Serial.println(sss);
+  Serial.print("ppp: "); Serial.println(ppp);
+  Serial.print("vvv: "); Serial.println(vvv);
+
+  delay(500);
+
+  Uno_and_Nano_Serial_receivedRFIDTags();  // Check if there is anything in the Serial1 Buffer
+
+  uchar i, tmp, checksum1;
+  uchar status;
+  uchar str[MAX_LEN];
+  uchar RC_size;
+  uchar blockAddr;  //Selection operation block address 0 to 63
+  String mynum = "";
+
+  str[1] = 0x4400;
+
+  Read_Sensor();
+  LCD_Display();
+  Gate_Open_CLose();
+  //Scan the last lecturer RC522 RFID Reader
+  //Find tags, return tag type
+  status = myRFID.AddicoreRFID_Request(PICC_REQIDL, str);
+  if (status == MI_OK) {
+    Serial.println("RFID tag detected");
+    Serial.print("Tag Type:\t\t");
+    uint tagType = str[0] << 8;
+    tagType = tagType + str[1];
+    switch (tagType) {
+      case 0x4400:
+        Serial.println("Mifare UltraLight");
+        break;
+      case 0x400:
+        Serial.println("Mifare One (Slot50)");
+        break;
+      case 0x200:
+        Serial.println("Mifare One (S70)");
+        break;
+      case 0x800:
+        Serial.println("Mifare Pro (X)");
+        break;
+      case 0x4403:
+        Serial.println("Mifare DESFire");
+        break;
+      default:
+        Serial.println("Unknown");
+        break;
+    }
+  }
+
+  //Anti-collision, return tag serial number 4 bytes
+  status = myRFID.AddicoreRFID_Anticoll(str);
+  if (status == MI_OK) {
+    checksum1 = str[0] ^ str[1] ^ str[2] ^ str[3];
+    Serial.print("The tag's number is:\t");
+    Serial.print(str[0]);
+    Serial.print(" , ");
+    Serial.print(str[1]);
+    Serial.print(" , ");
+    Serial.print(str[2]);
+    Serial.print(" , ");
+    Serial.println(str[3]);
+
+    Serial.print("Read Checksum:\t\t");
+    Serial.println(str[4]);
+    Serial.print("Calculated Checksum:\t");
+    Serial.println(checksum1);
+
+    if (str[0] == 116 && str[1] == 154 && str[2] == 206 && str[3] == 29)  //You can change this to the first byte of your tag by finding the card's ID through the Serial Monitor
+    {
+      Serial.println("\nLecturer!\n");
+      LecturerGateFlag  = 2;
+      aaa = 1;
+    }
+    else {
+      pulsate_buzzer = 1;
+      aaa = 1;
+    }
+    Serial.println();
+    delay(500);
+  }
+  //Off the Lecturer Led if he has gone out of the park or if a third party leaves his parking slot after discovered that the park wasnt meant for him.
+  if (status != MI_OK && aaa == 1 ) {
+    pulsate_buzzer = 0;
+    aaa = 0; //restore aaa
+    digitalWrite(buzzer, LOW);
+    if (LecturerGateFlag == 2) {
+      LecturerGateFlag = 0;
+    }
+  }
+
+  myRFID.AddicoreRFID_Halt();  //Command tag into hibernation
+
+  if (pulsate_buzzer == 1) {
+    BlinkWithouDelay();  //When a thirdparty parks in lecturer's slot, this executes.
+  }
+  if (HODGateFlag == 1 || HODGateFlag == 2 ) {
+    digitalWrite(RED, HIGH); //When HOD is present at the gate, ON the LED
+  }
+  else   {
+    digitalWrite(RED, LOW); //When HOD is present at the gate, ON the LED
+  }
+  if (LecturerGateFlag == 1 || LecturerGateFlag == 2) {
+    digitalWrite(GREEN, HIGH); //When Lecturer is present at the gate, ON the LED
+  }
+  else  {
+    digitalWrite(GREEN, LOW); //When HOD is present at the gate, ON the LED
+  }
+  if (SGF == 1) {
+    digitalWrite(BLUE_1, HIGH); //When Student is present at the gate, ON the LED
+  }
+  else  {
+    digitalWrite(BLUE_1, LOW); //When HOD is present at the gate, ON the LED
+  }
+  if (PGF == 1) {
+    digitalWrite(BLUE_2, HIGH); //When Parent is present at the gate, ON the LED
+  }
+  else   {
+    digitalWrite(BLUE_2, LOW); //When HOD is present at the gate, ON the LED
+  } if (VGF == 1) {
+    digitalWrite(BLUE_3, HIGH); //When Visitor is present at the gate, ON the LED
+  }
+  else    {
+    digitalWrite(BLUE_3, LOW); //When HOD is present at the gate, ON the LED
+  }
+}
+
+void Uno_and_Nano_Serial_receivedRFIDTags() {
+
+  // Check if there is anything in the Serial1 Buffer(Gate RFID Reader)
+  if (Serial1.available() > 0) {
+    incomingString_Nano_Gate_RC522_Reader = Serial1.readString();  // Read one value from the Serial buffer and store it in the variable incomingByte
+    incomingString_Nano_Gate_RC522_Reader.trim();
+
+    if (incomingString_Nano_Gate_RC522_Reader == "H.O.D!") {
+      if (HOD_run_once_onlywhencomingIn ) {
+        HODGateFlag = 1;
+        HOD_run_once_onlywhencomingIn = false;
+        incomingString_Nano_Gate_RC522_Reader = "";
+      }
+      else {
+        HOD_run_once_onlywhencomingIn = true;
+        incomingString_Nano_Gate_RC522_Reader = "";
+      }
+    }
+    if (incomingString_Nano_Gate_RC522_Reader == "Lecturer!") {
+      if (Lecturer_run_once_onlywhencomingIn) {
+        LecturerGateFlag = 1;
+        Lecturer_run_once_onlywhencomingIn = false;
+        incomingString_Nano_Gate_RC522_Reader = "";
+      }
+      else {
+        Lecturer_run_once_onlywhencomingIn = true;
+        incomingString_Nano_Gate_RC522_Reader = "";
+      }
+    }
+    if (incomingString_Nano_Gate_RC522_Reader == "Student!") {
+      if (Student_run_once_onlywhencomingIn) {
+        SGF = 1;
+        Student_run_once_onlywhencomingIn = false;
+        incomingString_Nano_Gate_RC522_Reader = "";
+      }
+      else {
+        Student_run_once_onlywhencomingIn = true;
+        incomingString_Nano_Gate_RC522_Reader = "";
+      }
+    }
+    if (incomingString_Nano_Gate_RC522_Reader == "Parent!") {
+      if (Parent_run_once_onlywhencomingIn) {
+        PGF = 1;
+        Parent_run_once_onlywhencomingIn = false;
+        incomingString_Nano_Gate_RC522_Reader = "";
+      }
+      else {
+        Parent_run_once_onlywhencomingIn = true;
+        incomingString_Nano_Gate_RC522_Reader = "";
+      }
+    }
+    if (incomingString_Nano_Gate_RC522_Reader == "Visitor!") {
+      if (Visitor_run_once_onlywhencomingIn) {
+        VGF = 1;
+        Visitor_run_once_onlywhencomingIn = false;
+        incomingString_Nano_Gate_RC522_Reader = "";
+      }
+      else {
+        Visitor_run_once_onlywhencomingIn = true;
+        incomingString_Nano_Gate_RC522_Reader = "";
+      }
+    }
+  }
+
+  if (Serial2.available() > 0) {   // Check if there is anything in the Serial2 Buffer
+    incomingString_Uno_RC522_Reader_HOD = Serial2.readString();  // Read one value from the Serial buffer and store it in the variable incomingByte
+    incomingString_Uno_RC522_Reader_HOD.trim();
+    Serial.println(incomingString_Uno_RC522_Reader_HOD);
+    Serial.println("");
+
+    if (incomingString_Uno_RC522_Reader_HOD == "H.O.D!") {
+      HODGateFlag = 2;
+    }
+    else if (incomingString_Uno_RC522_Reader_HOD == "Parent!" || incomingString_Uno_RC522_Reader_HOD == "Lecturer!" || incomingString_Uno_RC522_Reader_HOD == "Visitor!" || incomingString_Uno_RC522_Reader_HOD == "Student!")  {
+      pulsate_buzzer = 1;
+    }
+    else if (incomingString_Uno_RC522_Reader_HOD == "Stop!" ) {
+      pulsate_buzzer = 0;
+      digitalWrite(buzzer, LOW);
+      HODGateFlag = 0;
+    }
+
+  }
+}
+
+void Read_Sensor() {
+  if (digitalRead(ir_car1) == 0) {
+    Slot1 = 1;
+  }
+  else {
+    Slot1 = 0;
+  }
+  if (digitalRead(ir_car2) == 0) {
+    Slot2 = 1;
+  }
+  else {
+    Slot2 = 0;
+  }
+  if (digitalRead(ir_car3) == 0) {
+    Slot3 = 1;
+  }
+  else {
+    Slot3 = 0;
+  }
+  if (digitalRead(ir_car4) == 0) {
+    Slot4 = 1;
+  }
+  else {
+    Slot4 = 0;
+  }
+  if (digitalRead(ir_car5) == 0) {
+    Slot5 = 1;
+  }
+  else {
+    Slot5 = 0;
+  }
+}
+void LCD_Display() {
+  lcd.setCursor (0, 0);
+  lcd.print("Available Slot: ");
+  lcd.print(available_Slot);
+  lcd.print("   ");
+
+  lcd.setCursor (0, 1);
+  if (Slot1 == 1) {
+    lcd.print("S1:Fill ");
+  }
+  else {
+    lcd.print("S1:Empty");
+  }
+  lcd.setCursor (10, 1);
+  if (Slot2 == 1) {
+    lcd.print("S2:Fill ");
+  }
+  else {
+    lcd.print("S2:Empty");
+  }
+  lcd.setCursor (0, 2);
+  if (Slot3 == 1) {
+    lcd.print("S3:Fill ");
+    SGF = 1;
+    sss = 1;
+  }
+  else {
+    lcd.print("S3:Empty");
+    if (sss == 1) {
+      SGF = 0;
+      sss = 0;
+    }
+  }
+  lcd.setCursor (10, 2);
+  if (Slot4 == 1) {
+    lcd.print("S4:Fill ");
+    PGF = 1;
+    ppp = 1;
+  }
+  else {
+    lcd.print("S4:Empty");
+    if (ppp == 1) {
+      PGF = 0;
+      ppp = 0;
+    }
+  }
+  lcd.setCursor (0, 3);
+  if (Slot5 == 1) {
+    lcd.print("S5:Fill ");
+    VGF = 1;
+    vvv = 1;
+  }
+  else {
+    lcd.print("S5:Empty");
+    if (vvv == 1) {
+      VGF = 0;
+      vvv = 0;
+    }
+  }
+}
+void Gate_Open_CLose() {
+
+  //freshly coming in
+  if (digitalRead (ir_enter) == 0 && flag1 == 0) {
+    if (available_Slot > 0) {
+      flag1 = 1;
+      if (flag2 == 0) {
+        for (servoPositon = 0; servoPositon <= 90; servoPositon += 1) { // goes from 0 degrees to 180 degrees
+          // in steps of 1 degree
+          myservo.write(servoPositon);              // tell servo to go to position in variable 'pos'
+          delay(10);                       // waits 15 ms for the servo to reach the position
+        }
+        available_Slot = available_Slot - 1;
+      }
+    }
+    else {
+      lcd.setCursor (0, 0);
+      lcd.print("Sorry, Car Park Full");
+      delay(1500);
+    }
+  }
+
+  //freshly going out
+  if (digitalRead (ir_back) == 0 && flag2 == 0) {
+    flag2 = 1;
+    if (flag1 == 0) {
+      for (servoPositon = 0; servoPositon <= 90; servoPositon += 1) { // goes from 0 degrees to 180 degrees
+        // in steps of 1 degree
+        myservo.write(servoPositon);              // tell servo to go to position in variable 'pos'
+        delay(10);                       // waits 15 ms for the servo to reach the position
+      }
+      available_Slot = available_Slot + 1;
+    }
+  }
+
+  //if the vehicle is inb/w both gate sensors
+  if (flag1 == 1 && flag2 == 1) {
+    readyToMoveOut = 1;
+  }
+  //if the vehicle was inb/w both gate sensor and has moved away from one of the two sensors in other to move in or out fully
+  if ((readyToMoveOut == 1 && digitalRead (ir_enter) != 0 && digitalRead (ir_back) == 0) || (readyToMoveOut == 1 && digitalRead (ir_enter) == 0 && digitalRead (ir_back) != 0)) {
+    finallyOutofGate = 1;
+  }
+  //if the vehicle has finally moved away from both sensor to go into its slot or to go out of the gate.
+  if (finallyOutofGate == 1 && digitalRead (ir_enter) != 0 && digitalRead (ir_back) != 0) {
+    for (servoPositon = 90; servoPositon >= 0; servoPositon -= 1) { // goes from 180 degrees to 0 degrees
+      myservo.write(servoPositon);              // tell servo to go to position in variable 'servoPositon'
+      delay(10);                       // waits 15 ms for the servo to reach the position
+    }
+    flag1 = 0, flag2 = 0, finallyOutofGate = 0, readyToMoveOut = 0;
+  }
+}
+
+void BlinkWithouDelay() {
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousMillis >= interval) {
+    previousMillis = currentMillis;
+    if (ledState == LOW) {
+      ledState = HIGH;
+    } else {
+      ledState = LOW;
+    }
+    //    digitalWrite(RED, ledState);
+    digitalWrite(buzzer, ledState);
+  }
+}
