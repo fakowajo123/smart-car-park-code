@@ -1,0 +1,147 @@
+//Addicore RC522 Reader Library with SoftwareSerial Communication to Arduino MEGA
+
+// Example sketch to read the ID from an Addicore 13.56MHz RFID tag
+// as found in the RFID AddiKit found at:
+// http://www.addicore.com/RFID-AddiKit-with-RC522-MIFARE-Module-RFID-Cards-p/126.htm
+#include <SoftwareSerial.h>
+#include <AddicoreRFID.h>
+#include <SPI.h>
+
+#define uchar unsigned char
+#define uint unsigned int
+
+SoftwareSerial mySerial(2, 3);  // RX, TX
+
+uchar fifobytes;
+uchar fifoValue;
+
+AddicoreRFID myRFID;  // create AddicoreRFID object to control the RFID module
+
+/////////////////////////////////////////////////////////////////////
+//set the pins
+/////////////////////////////////////////////////////////////////////
+const int chipSelectPin = 10;
+const int NRSTPD = 5;
+int y, yy, yyy, yyyy, yyyyy;
+bool hasRun = false;
+//Maximum length of the array
+#define MAX_LEN 16
+
+void setup() {
+  Serial.begin(9600);  // RFID reader SOUT pin connected to Serial RX pin at 9600bps
+  mySerial.begin(9600);
+  // start the SPI library:
+  SPI.begin();
+
+  pinMode(chipSelectPin, OUTPUT);    // Set digital pin 10 as OUTPUT to connect it to the RFID /ENABLE pin
+  digitalWrite(chipSelectPin, LOW);  // Activate the RFID reader
+  pinMode(NRSTPD, OUTPUT);           // Set digital pin 10 , Not Reset and Power-down
+  digitalWrite(NRSTPD, HIGH);
+
+  myRFID.AddicoreRFID_Init();
+}
+
+void loop() {
+
+  uchar i, tmp, checksum1;
+  uchar status;
+  uchar str[MAX_LEN];
+  uchar RC_size;
+  uchar blockAddr;  //Selection operation block address 0 to 63
+  String mynum = "";
+
+  str[1] = 0x4400;
+  //Find tags, return tag type
+  status = myRFID.AddicoreRFID_Request(PICC_REQIDL, str);
+  if (status == MI_OK) {
+    Serial.println("RFID tag detected");
+    Serial.print("Tag Type:\t\t");
+    uint tagType = str[0] << 8;
+    tagType = tagType + str[1];
+    switch (tagType) {
+      case 0x4400:
+        Serial.println("Mifare UltraLight");
+        break;
+      case 0x400:
+        Serial.println("Mifare One (S50)");
+        break;
+      case 0x200:
+        Serial.println("Mifare One (S70)");
+        break;
+      case 0x800:
+        Serial.println("Mifare Pro (X)");
+        break;
+      case 0x4403:
+        Serial.println("Mifare DESFire");
+        break;
+      default:
+        Serial.println("Unknown");
+        break;
+    }
+  }
+
+  //Anti-collision, return tag serial number 4 bytes
+  status = myRFID.AddicoreRFID_Anticoll(str);
+  if (status == MI_OK) {
+    checksum1 = str[0] ^ str[1] ^ str[2] ^ str[3];
+    Serial.print("The tag's number is:\t");
+    Serial.print(str[0]);
+    Serial.print(" , ");
+    Serial.print(str[1]);
+    Serial.print(" , ");
+    Serial.print(str[2]);
+    Serial.print(" , ");
+    Serial.println(str[3]);
+
+    Serial.print("Read Checksum:\t\t");
+    Serial.println(str[4]);
+    Serial.print("Calculated Checksum:\t");
+    Serial.println(checksum1);
+
+    if (str[0] == 207 && str[1] == 35 && str[2] == 125 && str[3] == 7)  //You can change this to the first byte of your tag by finding the card's ID through the Serial Monitor
+    {
+      if (y == 0) {
+        Serial.println("\nH.O.D!\n");
+        mySerial.write("\nH.O.D!\n");
+        y = 1;
+      }
+    } else if (str[0] == 116 && str[1] == 154 && str[2] == 206 && str[3] == 29) {  //You can change this to the first byte of your tag by finding the card's ID through the Serial Monitor
+      if (yy == 0) {
+        Serial.println("\nLecturer!\n");
+        mySerial.write("\nLecturer!\n");
+        yy = 1;
+      }
+    } else if (str[0] == 116 && str[1] == 199 && str[2] == 177 && str[3] == 29) {  //You can change this to the first byte of your tag by finding the card's ID through the Serial Monitor
+
+      if (yyy == 0) {
+        Serial.println("\nStudent!\n");
+        mySerial.write("\nStudent!\n");
+        yyy = 1;
+      }
+    } else if (str[0] == 31 && str[1] == 150 && str[2] == 122 && str[3] == 7) {  //You can change this to the first byte of your tag by finding the card's ID through the Serial Monitor
+      if (yyyy == 0) {
+        Serial.println("\nParent!\n");
+        mySerial.write("\nParent!\n");
+        yyyy = 1;
+      }
+    } else if (str[0] == 67 && str[1] == 4 && str[2] == 157 && str[3] == 148) {  //You can change this to the first byte of your tag by finding the card's ID through the Serial Monitor
+      if (yyyyy == 0) {
+        Serial.println("\nVisitor!\n");
+        mySerial.write("\nVisitor!\n");
+        yyyyy = 1;
+      }
+    }
+    Serial.println();
+    delay(500);
+    // hasRun = true;
+  }
+  if (status != MI_OK) {
+    y = 0, yy = 0, yyy = 0, yyyy = 0, yyyyy = 0;
+  //   if (hasRun) {
+  //     mySerial.write("\nStop!\n");
+  //     hasRun = false;
+  //   }
+  }
+
+  myRFID.AddicoreRFID_Halt();  //Command tag into hibernation
+}
